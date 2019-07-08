@@ -1,0 +1,496 @@
+module(load="imudp")
+module(load="mmjsonparse")
+module(load="omelasticsearch")
+
+input(type="imudp" port="514")
+
+#action(type="omfile" file="/var/log/rsyslog-debug-01-before-jsonparse.log" template="RSYSLOG_DebugFormat")
+action(type="mmjsonparse")
+#action(type="omfile" file="/var/log/rsyslog-debug-02-after-jsonparse.log" template="RSYSLOG_DebugFormat")
+
+lookup_table(name="prio_to_level" file="<%=@erbrsyslogpath%>/prio_to_level.json")
+lookup_table(name="normalize_level" file="<%=@erbrsyslogpath%>/normalize_level.json")
+
+if strlen($!thread_name) > 0 then {
+    # Process fields from candlepin (logstash JSON format via imudp), example:
+    #
+    # {
+    # "@timestamp":"2019-05-22T10:13:28.659+01:00",
+    # "@version":"1",
+    # "message":"Request: verb=GET, uri=/candlepin/pools/ff8080816ac4ea98016ac533fafa1443",
+    # "logger_name":"org.candlepin.common.filter.LoggingFilter",
+    # "thread_name":"http-bio-8443-exec-2",
+    # "level":"INFO",
+    # "level_value":20000,
+    # "requestType":"req",
+    # "org":"sometimes present",
+    # "csid":"dc1a42f2-b805-4552-8c6c-acffaa498c6e",
+    # "requestUuid":"1da5278b-efe6-42c5-95a5-39bed9889b06"
+    # }
+    #
+    # See: https://github.com/logstash/logstash-logback-encoder#standard-fields
+    #
+    set $!foreman!app = "candlepin";
+    unset $!@version;
+    unset $!thread_name;
+    unset $!level_value;
+    unset $!requestType;
+    unset $!requestUuid;
+    set $!foreman!logger = $!logger_name;
+    unset $!logger_name;
+    if strlen($!csid) > 0 then {
+        set $!foreman!request = $!csid;
+    }
+    unset $!csid;
+    if strlen($!org) > 0 then {
+        set $!foreman!org_name = $!org;
+        set $!foreman!org_label = $!org;
+    }
+    unset $!org;
+} else if ($programname == 'foreman') or ($programname == 'smart-proxy') or ($programname == 'foreman-proxy') then {
+    # Set the app field first
+    if ($programname == 'foreman') then {
+      set $!foreman!app = "foreman";
+      set $!foreman!logger = $!FOREMAN_LOGGER;
+      unset $!FOREMAN_LOGGER;
+    } else if ($programname == 'smart-proxy') or ($programname == 'foreman-proxy') then {
+      # Logging through STDOUT->journal is sent as "smart-proxy", otherwise "foreman-proxy"
+      set $!foreman!app = "foreman-proxy";
+      if strlen($!PROXY_LOGGER) > 0 then {
+        set $!foreman!logger = $!PROXY_LOGGER;
+      } else {
+        set $!foreman!logger = "proxy";
+      }
+      unset $!PROXY_LOGGER;
+    }
+    # Process fields from foreman (logger-journald rubygem)
+    if strlen($!REQUEST) > 0 then {
+        set $!foreman!request = $!REQUEST;
+    }
+    unset $!REQUEST;
+    if strlen($!SESSION) > 0 then {
+        set $!foreman!session = $!SESSION;
+    }
+    unset $!SESSION;
+    if strlen($!USER_LOGIN) > 0 then {
+        set $!foreman!user_login = $!USER_LOGIN;
+    }
+    unset $!USER_LOGIN;
+    if strlen($!USER_ADMIN) > 0 then {
+        set $!foreman!user_admin = $!USER_ADMIN;
+    }
+    unset $!USER_ADMIN;
+    if strlen($!ORG_ID) > 0 then {
+        set $!foreman!org_id = $!ORG_ID;
+    }
+    unset $!ORG_ID;
+    if strlen($!LOC_ID) > 0 then {
+        set $!foreman!loc_id = $!LOC_ID;
+    }
+    unset $!LOC_ID;
+    if strlen($!ORG_NAME) > 0 then {
+        set $!foreman!org_name = $!ORG_NAME;
+    }
+    unset $!ORG_NAME;
+    if strlen($!LOC_NAME) > 0 then {
+        set $!foreman!loc_name = $!LOC_NAME;
+    }
+    unset $!LOC_NAME;
+    if strlen($!ORG_LABEL) > 0 then {
+        set $!foreman!org_label = $!ORG_LABEL;
+    }
+    unset $!ORG_LABEL;
+    if strlen($!LOC_LABEL) > 0 then {
+        set $!foreman!loc_label = $!LOC_LABEL;
+    }
+    unset $!LOC_LABEL;
+    if strlen($!REMOTE_IP) > 0 then {
+        set $!foreman!remote_ip = $!REMOTE_IP;
+    }
+    unset $!REMOTE_IP;
+    if strlen($!AUDIT_ACTION) > 0 then {
+        set $!foreman!audit!action = $!AUDIT_ACTION;
+    }
+    unset $!AUDIT_ACTION;
+    if strlen($!AUDIT_TYPE) > 0 then {
+        set $!foreman!audit!type = $!AUDIT_TYPE;
+    }
+    unset $!AUDIT_TYPE;
+    if strlen($!AUDIT_ID) > 0 then {
+        set $!foreman!audit!id = $!AUDIT_ID;
+    }
+    unset $!AUDIT_ID;
+    if strlen($!AUDIT_ATTRIBUTE) > 0 then {
+        set $!foreman!audit!attribute = $!AUDIT_ATTRIBUTE;
+    }
+    if strlen($!AUDIT_FIELD_OLD) > 0 then {
+        set $!foreman!audit!field_old = $!AUDIT_FIELD_OLD;
+    }
+    unset $!AUDIT_FIELD_OLD;
+    if strlen($!AUDIT_FIELD_NEW) > 0 then {
+        set $!foreman!audit!field_new = $!AUDIT_FIELD_NEW;
+    }
+    unset $!AUDIT_FIELD_NEW;
+    if strlen($!EXCEPTION_MESSAGE) > 0 then {
+        set $!foreman!exception!message = $!EXCEPTION_MESSAGE;
+    }
+    unset $!EXCEPTION_MESSAGE;
+    if strlen($!EXCEPTION_CLASS) > 0 then {
+        set $!foreman!exception!class = $!EXCEPTION_CLASS;
+    }
+    unset $!EXCEPTION_CLASS;
+    if strlen($!EXCEPTION_BACKTRACE) > 0 then {
+        set $!foreman!exception!backtrace = $!EXCEPTION_BACKTRACE;
+    }
+    unset $!EXCEPTION_BACKTRACE;
+    if strlen($!TEMPLATE_NAME) > 0 then {
+        set $!foreman!template!name = $!TEMPLATE_NAME;
+    }
+    unset $!TEMPLATE_NAME;
+    if strlen($!TEMPLATE_CONTEXT) > 0 then {
+        set $!foreman!template!context = $!TEMPLATE_CONTEXT;
+    }
+    unset $!TEMPLATE_CONTEXT;
+    if strlen($!TEMPLATE_DIGEST) > 0 then {
+        set $!foreman!template!digest = $!TEMPLATE_DIGEST;
+    }
+    unset $!TEMPLATE_DIGEST;
+    if strlen($!TEMPLATE_HOST_NAME) > 0 then {
+        set $!foreman!template!host_name = $!TEMPLATE_HOST_NAME;
+    }
+    unset $!TEMPLATE_HOST_NAME;
+    if strlen($!TEMPLATE_HOST_ID) > 0 then {
+        set $!foreman!template!host_id = $!TEMPLATE_HOST_ID;
+    }
+    unset $!TEMPLATE_HOST_ID;
+}
+
+# https://github.com/openshift/origin-aggregated-logging/tree/master/hack/testing/rsyslog
+template(name="cnvt_to_viaq_timestamp" type="list") {
+    property(name="TIMESTAMP" dateFormat="rfc3339")
+}
+
+if strlen($!_MACHINE_ID) > 0 then {
+    # convert from imjournal to viaq systemd format
+    # https://github.com/ViaQ/elasticsearch-templates/blob/master/namespaces/systemd.yml
+
+    set $!systemd!t!MACHINE_ID = $!_MACHINE_ID;
+    unset $!_MACHINE_ID;
+    if strlen($!CODE_FILE) > 0 then {
+        set $!systemd!u!CODE_FILE = $!CODE_FILE;
+    }
+    unset $!CODE_FILE;
+    if strlen($!CODE_FUNCTION) > 0 then {
+        set $!systemd!u!CODE_FUNCTION = $!CODE_FUNCTION;
+    }
+    unset $!CODE_FUNCTION;
+    if strlen($!CODE_LINE) > 0 then {
+        set $!systemd!u!CODE_LINE = $!CODE_LINE;
+    }
+    unset $!CODE_LINE;
+    if strlen($!ERRNO) > 0 then {
+        set $!systemd!u!ERRNO = $!ERRNO;
+    }
+    unset $!ERRNO;
+    if strlen($!MESSAGE_ID) > 0 then {
+        set $!systemd!u!MESSAGE_ID = $!MESSAGE_ID;
+    }
+    unset $!MESSAGE_ID;
+    if strlen($!RESULT) > 0 then {
+        set $!systemd!u!RESULT = $!RESULT;
+    }
+    unset $!RESULT;
+    if strlen($!UNIT) > 0 then {
+        set $!systemd!u!UNIT = $!UNIT;
+    }
+    unset $!UNIT;
+    if strlen($!SYSLOG_FACILITY) > 0 then {
+        set $!systemd!u!SYSLOG_FACILITY = $!SYSLOG_FACILITY;
+    }
+    unset $!SYSLOG_FACILITY;
+    if strlen($!SYSLOG_IDENTIFIER) > 0 then {
+        set $!systemd!u!SYSLOG_IDENTIFIER = $!SYSLOG_IDENTIFIER;
+    }
+    unset $!SYSLOG_IDENTIFIER;
+    if strlen($!SYSLOG_PID) > 0 then {
+        set $!systemd!u!SYSLOG_PID = $!SYSLOG_PID;
+    }
+    unset $!SYSLOG_PID;
+    if strlen($!_AUDIT_LOGINUID) > 0 then {
+        set $!systemd!t!AUDIT_LOGINUID = $!_AUDIT_LOGINUID;
+    }
+    unset $!_AUDIT_LOGINUID;
+    if strlen($!_AUDIT_SESSION) > 0 then {
+        set $!systemd!t!AUDIT_SESSION = $!_AUDIT_SESSION;
+    }
+    unset $!_AUDIT_SESSION;
+    if strlen($!_BOOT_ID) > 0 then {
+        set $!systemd!t!BOOT_ID = $!_BOOT_ID;
+    }
+    unset $!_BOOT_ID;
+    if strlen($!_CAP_EFFECTIVE) > 0 then {
+        set $!systemd!t!CAP_EFFECTIVE = $!_CAP_EFFECTIVE;
+    }
+    unset $!_CAP_EFFECTIVE;
+    # very noisy - commented out by default
+    #if strlen($!_CMDLINE) > 0 then {
+        #set $!systemd!t!CMDLINE = $!_CMDLINE;
+    #}
+    unset $!_CMDLINE;
+    if strlen($!_COMM) > 0 then {
+        set $!systemd!t!COMM = $!_COMM;
+    }
+    unset $!_COMM;
+    if strlen($!_EXE) > 0 then {
+        set $!systemd!t!EXE = $!_EXE;
+    }
+    unset $!_EXE;
+    if strlen($!_GID) > 0 then {
+        set $!systemd!t!GID = $!_GID;
+    }
+    unset $!_GID;
+    if strlen($!_HOSTNAME) > 0 then {
+        set $!systemd!t!HOSTNAME = $!_HOSTNAME;
+    }
+    unset $!_HOSTNAME;
+    if strlen($!_PID) > 0 then {
+        set $!systemd!t!PID = $!_PID;
+    }
+    unset $!_PID;
+    if strlen($!_SELINUX_CONTEXT) > 0 then {
+        set $!systemd!t!SELINUX_CONTEXT = $!_SELINUX_CONTEXT;
+    }
+    unset $!_SELINUX_CONTEXT;
+    if strlen($!_SOURCE_REALTIME_TIMESTAMP) > 0 then {
+        set $!systemd!t!SOURCE_REALTIME_TIMESTAMP = $!_SOURCE_REALTIME_TIMESTAMP;
+    }
+    unset $!_SOURCE_REALTIME_TIMESTAMP;
+    if strlen($!_SYSTEMD_CGROUP) > 0 then {
+        set $!systemd!t!SYSTEMD_CGROUP = $!_SYSTEMD_CGROUP;
+    }
+    unset $!_SYSTEMD_CGROUP;
+    if strlen($!_SYSTEMD_OWNER_UID) > 0 then {
+        set $!systemd!t!SYSTEMD_OWNER_UID = $!_SYSTEMD_OWNER_UID;
+    }
+    unset $!_SYSTEMD_OWNER_UID;
+    if strlen($!_SYSTEMD_SESSION) > 0 then {
+        set $!systemd!t!SYSTEMD_SESSION = $!_SYSTEMD_SESSION;
+    }
+    unset $!_SYSTEMD_SESSION;
+    if strlen($!_SYSTEMD_SLICE) > 0 then {
+        set $!systemd!t!SYSTEMD_SLICE = $!_SYSTEMD_SLICE;
+    }
+    unset $!_SYSTEMD_SLICE;
+    if strlen($!_SYSTEMD_UNIT) > 0 then {
+        set $!systemd!t!SYSTEMD_UNIT = $!_SYSTEMD_UNIT;
+    }
+    unset $!_SYSTEMD_UNIT;
+    if strlen($!_SYSTEMD_USER_UNIT) > 0 then {
+        set $!systemd!t!SYSTEMD_USER_UNIT = $!_SYSTEMD_USER_UNIT;
+    }
+    unset $!_SYSTEMD_USER_UNIT;
+    if strlen($!_TRANSPORT) > 0 then {
+        set $!systemd!t!TRANSPORT = $!_TRANSPORT;
+    }
+    unset $!_TRANSPORT;
+    if strlen($!_UID) > 0 then {
+        set $!systemd!t!UID = $!_UID;
+    }
+    unset $!_UID;
+    if strlen($!_KERNEL_DEVICE) > 0 then {
+        set $!systemd!k!KERNEL_DEVICE = $!_KERNEL_DEVICE;
+    }
+    unset $!_KERNEL_DEVICE;
+    if strlen($!_KERNEL_SUBSYSTEM) > 0 then {
+        set $!systemd!k!KERNEL_SUBSYSTEM = $!_KERNEL_SUBSYSTEM;
+    }
+    unset $!_KERNEL_SUBSYSTEM;
+    if strlen($!_UDEV_SYSNAME) > 0 then {
+        set $!systemd!k!UDEV_SYSNAME = $!_UDEV_SYSNAME;
+    }
+    unset $!_UDEV_SYSNAME;
+    if strlen($!_UDEV_DEVNODE) > 0 then {
+        set $!systemd!k!UDEV_DEVNODE = $!_UDEV_DEVNODE;
+    }
+    unset $!_UDEV_DEVNODE;
+    if strlen($!_UDEV_DEVLINK) > 0 then {
+        set $!systemd!k!UDEV_DEVLINK = $!_UDEV_DEVLINK;
+    }
+    unset $!_UDEV_DEVLINK;
+
+    # these fields require special handling
+    if strlen($!level) == 0 then {
+        if strlen($!PRIORITY) > 0 then {
+            set $!level = lookup("prio_to_level", $!PRIORITY);
+        }
+    }
+    unset $!PRIORITY;
+
+    # rsyslog 8.30.0 and later does case insensitive variable name comparison
+    # which means $!MESSAGE is the same as $!message - HOWEVER - the case
+    # of the variable name is preserved when outputting, so we need to "normalize"
+    # to all lower case so that the internal JSON to string conversion will output
+    # "message" in the outgoing record
+    if (strlen($!message) == 0) and (strlen($!MESSAGE) == 0) then {
+        if strlen($!log) > 0 then {
+            set $!message = $!log;
+        }
+    } else {
+        if $!message == $!MESSAGE then {
+            # 8.30+ (insensitive variables)
+            set $.save_message = $!message;
+            unset $!message;
+            set $!message = $.save_message;
+            unset $.save_message;
+        } else {
+            # (sensitive variables)
+            if strlen($!message) == 0 then {
+                set $!message = $!MESSAGE;
+            }
+            unset $!MESSAGE;
+        }
+        unset $!msg;
+    }
+    if strlen($!hostname) == 0 then {
+            if strlen($!_HOSTNAME) > 0 then {
+                set $!hostname = $!_HOSTNAME;
+            } else {
+                set $!hostname = $hostname;
+            }
+    }
+    unset $!_HOSTNAME;
+    if strlen($!@timestamp) == 0 then {
+        # need to figure out how to convert _SOURCE_REALTIME_TIMESTAMP
+        # in the meantime . . .
+        set $!@timestamp = exec_template('cnvt_to_viaq_timestamp');
+    }
+    unset $!_SOURCE_REALTIME_TIMESTAMP;
+    unset $!__REALTIME_TIMESTAMP;
+    # end of block that converts imjournal to viaq format
+}
+
+# normalize level
+if strlen($!level) > 0 then {
+    set $.lclevel = tolower($!level);
+    set $.normlevel = lookup("normalize_level", $.lclevel);
+    if $.normlevel == "unknown" then {
+        continue # do nothing - preserve original value
+    } else {
+        set $!level = $.normlevel;
+    }
+    unset $.lclevel;
+    unset $.normlevel;
+} else {
+    if $!stream == "stdout" then {
+        set $!level = "info";
+    } else {
+        if $!stream == "stderr" then {
+            set $!level = "err";
+        } else {
+            set $!level = "unknown";
+        }
+    }
+}
+
+template(name="viaq_template" type="list") {
+    property(name="$!all-json-plain")
+}
+
+template(name="foreman_logfile_template" type="list") {
+    property(name="timestamp" dateFormat="rfc3339" position.from="1" position.to="19")
+    constant(value=" ")
+    property(name="$!foreman!request" position.from="1" position.to="8")
+    constant(value=" ")
+    property(name="$!level")
+    constant(value=" ")
+    property(name="$!foreman!logger")
+    constant(value=" ")
+    property(name="msg" droplastlf="on")
+    constant(value="\n")
+}
+
+template(name="audit_logfile_template" type="list") {
+    property(name="timestamp" dateFormat="rfc3339" position.from="1" position.to="19")
+    constant(value=" ")
+    property(name="$!foreman!request" position.from="1" position.to="8")
+    constant(value=" ")
+    property(name="$!foreman!audit!type")
+    constant(value=" (")
+    property(name="$!foreman!audit!id")
+    constant(value=") ")
+    property(name="$!foreman!audit!action")
+    constant(value=" event on ")
+    property(name="$!foreman!audit!attribute")
+    constant(value=" ")
+    property(name="$!foreman!audit!field_old")
+    constant(value=" -> ")
+    property(name="$!foreman!audit!field_new")
+    constant(value="\n")
+}
+
+template(name="proxy_logfile_template" type="list") {
+    property(name="timestamp" dateFormat="rfc3339" position.from="1" position.to="19")
+    constant(value=" ")
+    property(name="$!foreman!request" position.from="1" position.to="8")
+    constant(value=" ")
+    property(name="$!level")
+    constant(value=" ")
+    property(name="msg" droplastlf="on")
+    constant(value="\n")
+}
+
+template(name="candlepin_logfile_template" type="list") {
+    property(name="timestamp" dateFormat="rfc3339" position.from="1" position.to="19")
+    constant(value=" [] [csid=")
+    property(name="$!foreman!request" position.from="1" position.to="8")
+    constant(value=", org=")
+    property(name="$!foreman!org_label")
+    constant(value="] ")
+    property(name="$!level")
+    constant(value=" ")
+    property(name="$!foreman!logger")
+    constant(value=" ")
+    property(name="$!message" droplastlf="on")
+    constant(value="\n")
+}
+
+if $!foreman!logger == 'audit' then {
+    action(type="omfile" file="/var/log/foreman/audit.log" template="audit_logfile_template")
+} else if $programname == 'foreman' then {
+    action(type="omfile" file="/var/log/foreman/production.log" template="foreman_logfile_template")
+} else if $programname == 'smart-proxy' then {
+    action(type="omfile" file="/var/log/foreman-proxy/proxy.log" template="proxy_logfile_template")
+} else if $!foreman!app == 'candlepin' then {
+    action(type="omfile" file="/var/log/candlepin/candlepin.log" template="candlepin_logfile_template")
+}
+
+set $.viaq_index_prefix = "project.foreman-logs.";
+template(name="index_template" type="list") {
+    property(name="$.viaq_index_prefix")
+    property(name="$!@timestamp" dateFormat="rfc3339" position.from="1" position.to="4")
+    constant(value=".")
+    property(name="$!@timestamp" dateFormat="rfc3339" position.from="6" position.to="7")
+    constant(value=".")
+    property(name="$!@timestamp" dateFormat="rfc3339" position.from="9" position.to="10")
+}
+
+action(
+    type="omelasticsearch"
+    server="<%=@erbaddr%>"
+    serverport="<%=@erbport%>"
+    template="viaq_template"
+    searchIndex="index_template"
+    dynSearchIndex="on"
+    bulkmode="on"
+    errorfile="/var/lib/rsyslog/es-errors.log"
+)
+
+template(name="viaq_template_debug" type="list") {
+    property(name="$!all-json-plain")
+    constant(value="\n\n")
+}
+
+#action(type="omfile" file="/var/log/rsyslog-debug-03-final.log" template="RSYSLOG_DebugFormat")
+#action(type="omfile" file="/var/log/rsyslog-debug-04-json.log" template="viaq_template_debug")
+
+
