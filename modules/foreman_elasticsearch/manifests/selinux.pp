@@ -6,12 +6,6 @@ class foreman_elasticsearch::selinux {
     }
   }
 
-# exec { 'Set permissive for syslogd_t':
-#   command => 'semanage permissive -a syslogd_t && touch /etc/foreman/foreman-elasticsearch/selinux.check',
-#   path    => ['/usr/bin/', '/usr/sbin/', '/bin/'],
-#   creates => '/etc/foreman/foreman-elasticsearch/selinux.check',
-# }
-  
   selinux::permissive { 'syslogd_t':
     ensure => 'present'
   }
